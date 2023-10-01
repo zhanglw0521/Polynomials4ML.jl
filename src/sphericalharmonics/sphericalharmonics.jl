@@ -61,7 +61,9 @@ include("rylm.jl")
 include("crlm.jl")
 include("rrlm.jl")
 
-const XlmBasis = Union{RYlmBasis, CYlmBasis, CRlmBasis, RRlmBasis}
+include("staticylms.jl")
+
+const XlmBasis = Union{RYlmBasis, CYlmBasis, CRlmBasis, RRlmBasis, StaticRYlm}
 
 """
 max L degree for which the alp coefficients have been precomputed
