@@ -1,13 +1,15 @@
 using DynamicPolynomials: @polyvar;
-using StaticPolynomials: gradient, PolynomialSystem, evaluate_and_jacobian
+using StaticPolynomials: gradient, PolynomialSystem, evaluate_and_jacobian 
 using MultivariatePolynomials: polynomial, constant_term
+using StaticPolynomials
 
-using Polynomials4ML: SVecPoly4MLBasis
+using Polynomials4ML: SVecPoly4MLBasis, _make_reqfields, @reqfields
 
-export StaticRYlm
+export StatRYlmBasis
 
 struct StatRYlmBasis{TP <: PolynomialSystem} <: SVecPoly4MLBasis
     poly::TP
+    @reqfields()
 end
 
 function StatRYlmBasis(L::Int)
@@ -41,14 +43,16 @@ function StatRYlmBasis(L::Int)
     sqrt(35/32/π) * x * (x^2 - 3 * y^2), 
     # Y4
     ]
-    return StatRYlmBasis(PolynomialSystem(RYlm4[1:sizeY(L)]))
+    return StatRYlmBasis(PolynomialSystem(RYlm4[1:sizeY(L)]), _make_reqfields()...)
 end
 
+import Base: length
+length(basis::StatRYlmBasis{TP}) where {TP} = length(basis.poly)
 
 # serial evaluation
-evaluate(basis::StatRYlmBasis{TP}, x::AbstractVector) where TP <: PolynomialSystem = evaluate(basis.poly, x)
+evaluate(basis::StatRYlmBasis{TP}, x::AbstractVector) where TP <: PolynomialSystem = StaticPolynomials.evaluate(basis.poly, x)
 
-evaluate_ed(basis::StaticRYlmBasis{TP}, x::AbstractVector) where TP <: PolynomialSystem = evaluate_and_jacobian(basis.poly, x)
+evaluate_ed(basis::StatRYlmBasis{TP}, x::AbstractVector) where TP <: PolynomialSystem = StaticPolynomials.evaluate_and_jacobian(basis.poly, x)
 
 
 # batch evaluation
