@@ -47,27 +47,48 @@ end
 
 LinearLayer(in_dim::Int, out_dim::Int; feature_first = false, use_cache = true) = LinearLayer{feature_first}(in_dim, out_dim, use_cache, _make_reqfields()...)
 
-_valtype(l::LinearLayer, x::AbstractArray, ps)  = 
+_valtype(l::LinearLayer, x::AbstractArray{<: Number}, ps)  = 
       promote_type(eltype(x), eltype(ps.W))
 
-function (l::LinearLayer)(x::AbstractVector, ps, st)
+# === evaluation interface ===
+function (l::LinearLayer)(x::AbstractVector{<: Number}, ps, st)
    out = acquire!(st.pool, :A, (l.out_dim, ), _valtype(l, x, ps))
    mul!(unwrap(out), ps.W, unwrap(x)); release!(x); 
    return out, st
 end
 
-function (l::LinearLayer{true})(x::AbstractMatrix, ps, st)
+function (l::LinearLayer{true})(x::AbstractMatrix{<: Number}, ps, st)
    out = acquire!(st.pool, :bA, (l.out_dim, size(x, 2)), _valtype(l, x, ps)); 
    mul!(unwrap(out), ps.W, unwrap(x)); release!(x); 
    return out, st
 end
 
-(l::LinearLayer{false})(x::AbstractMatrix, ps, st) = begin
+(l::LinearLayer{false})(x::AbstractMatrix{<: Number}, ps, st) = begin
    out = acquire!(st.pool, :bA, (size(x, 1), l.out_dim), _valtype(l, x, ps)); 
    mul!(unwrap(out), unwrap(x), transpose(PtrArray(ps.W))); release!(x);
    return out, st
 end
- 
+
+function (l::LinearLayer)(x::AbstractVector, ps, st)
+   out = ps.W * unwrap(x)
+   release!(x)
+   return out, st
+end
+
+function (l::LinearLayer{true})(x::AbstractMatrix, ps, st)
+   out = ps.W * unwrap(x)
+   release!(x)
+   return out, st
+end
+
+(l::LinearLayer{false})(x::AbstractMatrix, ps, st) = begin
+   out = unwrap(x) * transpose(ps.W)
+   release!(x)
+   return out, st
+end
+
+# === 
+
 # Jerry: Maybe we should use Glorot Uniform if we have no idea about what we should use?
 LuxCore.initialparameters(rng::AbstractRNG, l::LinearLayer) = 
       ( W = randn(rng, l.out_dim, l.in_dim), )
@@ -75,12 +96,37 @@ LuxCore.initialparameters(rng::AbstractRNG, l::LinearLayer) =
 LuxCore.initialstates(rng::AbstractRNG, l::LinearLayer) = 
       ( l.use_cache ?  (pool =  ArrayPool(FlexArrayCache), ) 
                     : (pool =  ArrayPool(FlexArray), ))
- 
+
+# === connection with ChainRulesCore ===
 # TODO: check whether we can do this without multiple dispatch on vec/mat without loss of performance
-function rrule(::typeof(LuxCore.apply), l::LinearLayer, x::AbstractVector, ps, st)
+function rrule(::typeof(LuxCore.apply), l::LinearLayer, x::AbstractVector{<: Number}, ps, st)
    val = l(x, ps, st)
    function pb(A)
       return NoTangent(), NoTangent(), ps.W' * A[1], (W = A[1] * x',), NoTangent()
+   end
+   return val, pb
+end
+
+function rrule(::typeof(LuxCore.apply), l::LinearLayer, x::AbstractMatrix{<: Number}, ps, st)
+   val = l(x, ps, st)
+   function pb(A)
+      return NoTangent(), NoTangent(), ps.W' * A[1], (W = A[1] * x',), NoTangent()
+   end
+   return val, pb
+end
+
+function rrule(::typeof(LuxCore.apply), l::LinearLayer{false}, x::AbstractMatrix{<: Number}, ps, st)
+   val = l(x, ps, st)
+   function pb(A)
+      return NoTangent(), NoTangent(), A[1] * ps.W, (W = A[1]' * x,), NoTangent()
+   end
+   return val, pb
+end
+
+function rrule(::typeof(LuxCore.apply), l::LinearLayer, x::AbstractVector, ps, st)
+   val = l(x, ps, st)
+   function pb(A)
+      return NoTangent(), NoTangent(), ps.W' * A[1], (W = [dot(ai, xi) for ai in A[1], xi in x],), NoTangent()
    end
    return val, pb
 end
@@ -88,7 +134,7 @@ end
 function rrule(::typeof(LuxCore.apply), l::LinearLayer, x::AbstractMatrix, ps, st)
    val = l(x, ps, st)
    function pb(A)
-      return NoTangent(), NoTangent(), ps.W' * A[1], (W = A[1] * x',), NoTangent()
+      return NoTangent(), NoTangent(), ps.W' * A[1], (W = sum([dot(ai, xi) for ai in A[1][:, k], xi in x[:, k]] for k = 1:size(x, 2) ),), NoTangent()
    end
    return val, pb
 end
@@ -96,7 +142,7 @@ end
 function rrule(::typeof(LuxCore.apply), l::LinearLayer{false}, x::AbstractMatrix, ps, st)
    val = l(x, ps, st)
    function pb(A)
-      return NoTangent(), NoTangent(), A[1] * ps.W, (W = A[1]' * x,), NoTangent()
+      return NoTangent(), NoTangent(), A[1] * ps.W, (W = sum([dot(ai, xi) for ai in A[1][k, :], xi in x[k, :]] for k = 1:size(x, 1) ),), NoTangent()
    end
    return val, pb
 end
